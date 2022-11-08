@@ -714,7 +714,7 @@ def findsolution2(supply, demand, cost):
   	    temp_cost = stepingStone(mcost,temp_cost,rows,columns)
   	    cost_b = hitungCost(mcost,temp_cost)
 
-    return [mcost, cost_a]
+    return [temp_cost, cost_a]
 ##############################
 def on_add_input_click(event):
     number_of_supply = document.querySelector("#number-of-supply")
