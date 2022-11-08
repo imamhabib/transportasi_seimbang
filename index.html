@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1"/>
+    <title>Menemukan minimum cost dari persoalan transportasi</title>
+    <link rel="stylesheet" href="https://pyscript.net/latest/pyscript.css"/>
+    <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+  </head>
+  <body>
+    <h1>Program untuk menemukan minimum cost dari persoalan transportasi</h1>
+    <fieldset>
+      <label for="number-of-supply">Masukan jumlah lokasi supply</label>&nbsp;&nbsp;&nbsp;&nbsp;
+      <input id="number-of-supply" type="number" name="number_of_supply" min="1" value="1"><br>
+      <label for="number-of-demand">Masukan jumlah lokasi demand</label>&nbsp;&nbsp;&nbsp;&nbsp;
+      <input id="number-of-demand" type="number" name="number_of_demand" min="1" value="1"><br>
+      <button id="input-cost">Input Matriks Supply Demand Cost</button>
+    </fieldset>
+    <fieldset>
+      <table id="transportation-matrix"></table><br>
+      <br>
+      Pilih metode awal inisialisasi
+      <select id="initial">
+      	<option value="1">1. NortWest</option>
+      	<option value="2">2. Vogel</option>
+      </select>
+      <br><br>
+      <button id="calculate-cost">Hitung minimum cost</button>
+    </fieldset>
+    <br>
+    <p id="result-info"></p>
+    <table id="cost-matrix" border="1"></table>
+    <p id="transportation-cost"></p>
+    <py-script>
+from pyodide.ffi import create_proxy, to_js
+import copy
+
+####################
+# function to balance the matrix cost if total supply is not equal with total demand
+# by adding zero dummy column if demand is lower or zero dummy row if demand is higher
+# returning new matrix of supply, demand, cost, and information about the balance
+# complexity: m+n = O(2n) if supply and demand is equal, 2m+n or m+2n = O(3n) if supply and demand is not equal
+def balancingCost(supply, demand, cost):
+    balance = total_supply = total_demand = 0
+    msupply = copy.deepcopy(supply)
+    mdemand = copy.deepcopy(demand)
+    mcost = copy.deepcopy(cost)
+
+    for x in supply:
+        total_supply += x
+
+    for x in demand:
+        total_demand += x
+
+    if total_supply > total_demand:
+        balance = 1
+        mdemand.append(total_supply - total_demand)
+        for i in range(len(supply)):
+            mcost[i].append(0)
+
+    if total_supply < total_demand:
+        balance = -1
+        msupply.append(total_demand - total_supply)
+        mcost.append([0] * len(demand))
+
+    return [msupply, mdemand, mcost, balance]
+
+
+# function to find initial solution with heuristic vogel -- minimum maximum cost difference for penalty
+# returning allocated cost and its transportation cost
+# complexity ((m+n-1)((2mn) + (i(m atau n)) + (m atau m+n atau n))) = O(4n3 + 2n) atau O(4n3 + 3n) atau O(4n3 + 2n2 + n) atau O(4n3 + 2n2 + 2n)
+def findInitialSolution(msupply, mdemand, mcost):
+    allocated_cells = []
+    transportation_cost = 0
+    number_of_supply = len(msupply)
+    number_of_demand = len(mdemand)
+    remain_row = number_of_supply
+    remain_column = number_of_demand
+    isupply = copy.deepcopy(msupply)
+    idemand = copy.deepcopy(mdemand)
+    icost = copy.deepcopy(mcost)
+
+    # function to find maximum penalty by minimum maximum cost difference
+    # returning selected row and column penalty
+    def selectMaxPenalty(number_of_supply, number_of_demand, isupply, idemand, icost):
+        selected = []
+        max_penalty = None
+
+        # find in rows
+        for i in range(number_of_supply):
+            if isupply[i] > 0:
+                row_i_min_value = None
+                row_i_max_value = None
+                for j in range(number_of_demand):
+                    if icost[i][j] is not None:
+                        if row_i_min_value == None:
+                            row_i_min_value = row_i_max_value = icost[i][j]
+                        else:
+                            if icost[i][j] < row_i_min_value:
+                                row_i_min_value = icost[i][j]
+                            if icost[i][j] > row_i_max_value:
+                                row_i_max_value = icost[i][j]
+                penalty = row_i_max_value - row_i_min_value
+                if max_penalty == None:
+                    max_penalty = penalty
+                    selected = [[1, i]]
+                elif penalty > max_penalty:
+                    max_penalty = penalty
+                    selected = [[1, i]]
+                elif penalty == max_penalty:
+                    selected.append([1, i])
+        # find in columns
+        for i in range(number_of_demand):
+            if idemand[i] > 0:
+                column_i_min_value = None
+                column_i_max_value = None
+                for j in range(number_of_supply):
+                    if icost[j][i] is not None:
+                        if column_i_min_value == None:
+                            column_i_min_value = column_i_max_value = icost[j][i]
+                        else:
+                            if icost[j][i] < column_i_min_value:
+                                column_i_min_value = icost[j][i]
+                            if icost[j][i] > column_i_max_value:
+                                column_i_max_value = icost[j][i]
+                penalty = column_i_max_value - column_i_min_value
+                if max_penalty == None:
+                    max_penalty = penalty
+                    selected = [[2, i]]
+                elif penalty > max_penalty:
+                    max_penalty = penalty
+                    selected = [[2, i]]
+                elif penalty == max_penalty:
+                    selected.append([2, i])
+
+        return selected
+
+    # function to find cell with least cost to be allocated, find one with maximum allocated
+    # returning selected cell from selected row/column penalty
+    def findAllocatedCell(number_of_supply, number_of_demand, isupply, idemand, icost):
+        cell = []
+        selected = selectMaxPenalty(number_of_supply, number_of_demand, isupply, idemand, icost)
+        least_cost = None
+        max_allocation = None
+
+        for i in range(len(selected)):
+            # find from selected row penalty
+            if selected[i][0] == 1:
+                for j in range(number_of_demand):
+                    if icost[selected[i][1]][j] is not None:
+                        if least_cost == None:
+                            least_cost = icost[selected[i][1]][j]
+                            if isupply[selected[i][1]] > idemand[j]:
+                                unit = idemand[j]
+                            else:
+                                unit = isupply[selected[i][1]]
+                            max_allocation = unit
+                            cell = [selected[i][1], j]
+                        else:
+                            if icost[selected[i][1]][j] < least_cost:
+                                cell = [selected[i][1], j]
+                                least_cost = icost[selected[i][1]][j]
+                                if isupply[selected[i][1]] > idemand[j]:
+                                    unit = idemand[j]
+                                else:
+                                    unit = isupply[selected[i][1]]
+                                max_allocation = unit
+
+                            elif icost[selected[i][1]][j] == least_cost:
+                                if isupply[selected[i][1]] > idemand[j]:
+                                    unit = idemand[j]
+                                else:
+                                    unit = isupply[selected[i][1]]
+                                allocation = unit
+                                if allocation > max_allocation:
+                                    max_allocation = allocation
+                                    cell = [selected[i][1], j]
+            # find from selected column penalty
+            elif selected[i][0] == 2:
+                for j in range(number_of_supply):
+                    if icost[j][selected[i][1]] is not None:
+                        if least_cost == None:
+                            least_cost = icost[j][selected[i][1]]
+                            if isupply[j] > idemand[selected[i][1]]:
+                                unit = idemand[selected[i][1]]
+                            else:
+                                unit = isupply[j]
+                            max_allocation = unit
+                            cell = [j, selected[i][1]]
+                        else:
+                            if icost[j][selected[i][1]] < least_cost:
+                                cell = [j, selected[i][1]]
+                                least_cost = icost[j][selected[i][1]]
+                                if isupply[j] > idemand[selected[i][1]]:
+                                    unit = idemand[selected[i][1]]
+                                else:
+                                    unit = isupply[j]
+                                max_allocation = unit
+                            if icost[j][selected[i][1]] == least_cost:
+                                if isupply[j] > idemand[selected[i][1]]:
+                                    unit = idemand[selected[i][1]]
+                                else:
+                                    unit = isupply[j]
+                                allocation = unit
+                                if allocation > max_allocation:
+                                    max_allocation = allocation
+                                    cell = [j, selected[i][1]]
+
+        return cell
+
+    # calculate initial cost and its transportation cost
+    while remain_row > 0 and remain_column > 0:
+        # find cell to be allocated
+        c = findAllocatedCell(number_of_supply, number_of_demand, isupply, idemand, icost)
+        # update everything
+        if isupply[c[0]] > idemand[c[1]]:
+            unit = idemand[c[1]]
+            c.append(unit)
+            allocated_cells.append(c)
+            transportation_cost += icost[c[0]][c[1]] * unit
+            isupply[c[0]] -= unit
+            idemand[c[1]] = 0
+            for i in range(number_of_supply):
+                icost[i][c[1]] = None
+            remain_column -= 1
+        else:
+            unit = isupply[c[0]]
+            c.append(unit)
+            allocated_cells.append(c)
+            transportation_cost += icost[c[0]][c[1]] * unit
+            isupply[c[0]] = 0
+            idemand[c[1]] -= unit
+            if idemand[c[1]] == 0:
+                for i in range(number_of_supply):
+                    icost[i][c[1]] = None
+                remain_column -= 1
+            icost[c[0]] = [None] * number_of_demand
+            remain_row -= 1
+
+    # create the initial solution of matrix cost
+    scost = [[None for _ in range(number_of_demand)] for _ in range(number_of_supply)]
+    for i in range(len(allocated_cells)):
+        scost[allocated_cells[i][0]][allocated_cells[i][1]] = allocated_cells[i][2]
+
+    return [scost, transportation_cost]
+
+
+# function to find optimal solution (stepping stone)
+# returning allocated cost and its transportation cost
+def findOptimalSolution(msupply, mdemand, mcost, cost, scost):
+    optimal = False
+    transportation_cost = 0
+    number_of_supply = len(msupply)
+    number_of_demand = len(mdemand)
+
+    # function to check if solution is non-degenerate
+    # retruning difference with the number allocated cells should be allocated
+    # positive value indicate a number of missing cells (degeneracy)
+    # negative value indicate a number of excess cells (redudancy)
+    def checkNonDegeneracy(scost, number_of_supply, number_of_demand):
+        number_of_allocated_cells = 0
+        for i in range(len(scost)):
+            for j in range(len(scost[0])):
+                if scost[i][j] is not None:
+                    number_of_allocated_cells += 1
+        difference = (number_of_supply + number_of_demand - 1) - number_of_allocated_cells
+        return difference
+
+    # function to convert solution to be non-degenerate
+    # retruning new initial solution of matrix cost
+    def resolveDegeneracy(scost, cost, number_of_missing_cell):
+        # find non allocated least cost
+        arr_cost = []
+        for i in range(len(cost)):
+            for j in range(len(cost[0])):
+                if scost[i][j] is None:
+                    arr_cost.append([cost[i][j], i, j])
+        number_of_non_allocated_cost = len(arr_cost)
+        # heap sort algorithm for the array
+        def sortfy_arr(arr, n, i):
+            larger_element = i
+            left = 2 * i + 1
+            right = 2 * i + 2
+            if left < n and arr[larger_element][0] < arr[left][0]:
+                larger_element = left
+            if right < n and arr[larger_element][0] < arr[right][0]:
+                larger_element = right
+            if larger_element != i:
+                arr[i], arr[larger_element] = arr[larger_element], arr[i]
+                sortfy_arr(arr, n, larger_element)
+        def sort_arr(arr):
+            n = len(arr)
+            for i in range(n//2 - 1, -1, -1):
+                sortfy_arr(arr, n, i)
+            for i in range(n-1, 0, -1):
+                arr[i], arr[0] = arr[0], arr[i]
+                sortfy_arr(arr, i, 0)
+        # sort the array
+        sort_arr(arr_cost)
+        # check is candidate forming close path with allocated cells
+        def findClosepath(scost, number_of_supply, number_of_demand, x, y, x0, y0):
+            for i in range(number_of_demand):
+                if i != y and scost[x][i] is not None:
+                    if i != y0:
+                        if checkVertical(scost, number_of_supply, number_of_demand, x, i, x0, y0):
+                            return True
+                    else:
+                        return True
+            return False
+        def checkVertical(scost, number_of_supply, number_of_demand, x, y, x0, y0):
+            for i in range(number_of_supply):
+                if i != x and scost[i][y] is not None:
+                    if findClosepath(scost, number_of_supply, number_of_demand, i, y, x0, y0):
+                        return True
+            return False
+        # find non allocated cells to add to the initial matrix cost
+        n = 0
+        i = 0
+        while n < number_of_missing_cell:
+            if findClosepath(scost, number_of_supply, number_of_demand, arr_cost[i][1], arr_cost[i][2], arr_cost[i][1], arr_cost[i][2]) == False:
+                scost[arr_cost[i][1]][arr_cost[i][2]] = 0
+                n += 1
+            i += 1
+        return scost
+
+    # function to find closepath with highest negative cost change
+    # returning the closepath with highest negative cost change
+    def findHighestNegativeNetCostChange(scost, mcost, number_of_supply, number_of_demand):
+        highest_negative_cost_change = [0]
+        selected_path = [None]
+
+        # function to find path in horizontal path
+        def findHorizontalAllocatedCell(scost, mcost, number_of_supply, number_of_demand, x, y, x0, y0, position, path, route, highest_negative_cost_change, selected_path):
+            position *= -1
+            old_path = copy.deepcopy(path)
+            for i in range(number_of_demand):
+                if i != y and scost[x][i] is not None:
+                    cost_ij = mcost[x][i] * position
+                    path.append([x, i, cost_ij])
+                    if i != y0:
+                        if findVerticalAllocatedCell(scost, mcost, number_of_supply, number_of_demand, x, i, x0, y0, position, path, route, highest_negative_cost_change, selected_path):
+                            return True
+                        else:
+                            path = copy.deepcopy(old_path)
+                    else:
+                        route.append(path)
+                        net_cost_change = 0
+                        for i in range(len(path)):
+                            net_cost_change += path[i][2]
+                        if net_cost_change < highest_negative_cost_change[0]:
+                            highest_negative_cost_change[0] = copy.deepcopy(net_cost_change)
+                            selected_path[0] = copy.deepcopy(path)
+                        return True
+            return False
+
+        # function to find path in vertical path
+        def findVerticalAllocatedCell(scost,
+            mcost, number_of_supply, number_of_demand, x, y, x0, y0, position, path, route, highest_negative_cost_change, selected_path):
+            position *= -1
+            old_path = copy.deepcopy(path)
+            for i in range(number_of_supply):
+                if i != x and scost[i][y] is not None:
+                    cost_ij = mcost[i][y] * position
+                    path.append([i, y, cost_ij])
+                    if findHorizontalAllocatedCell(scost, mcost, number_of_supply, number_of_demand, i, y, x0, y0, position, path, route, highest_negative_cost_change, selected_path):
+                        return True
+                    else:
+                        path = copy.deepcopy(old_path)
+            return False
+
+        # find closepath with highest negative cost change
+        number_of_closepath = 0
+        route = []
+        for m in range(number_of_supply):
+            for n in range(number_of_demand):
+                if scost[m][n] is None:
+                    position = 1
+                    cost_ij = mcost[m][n] * position
+                    path = [[m, n, cost_ij]]
+                    if findHorizontalAllocatedCell(scost, mcost, number_of_supply, number_of_demand, m, n, m, n, position, path, route, highest_negative_cost_change, selected_path):
+                        number_of_closepath += 1
+
+        # calculate number of found closepath with highest negative cost change
+        if selected_path[0] is not None:
+            number_of_highest_negative_cost_change = len(selected_path[0])
+        else:
+            number_of_highest_negative_cost_change =0
+
+        return [number_of_highest_negative_cost_change, selected_path]
+
+    # function to change the solution matrix cost to better minimum
+    # returning better optimal matrix cost
+    def makeOptimal(selected_path, scost):
+        # find minimum value in negative position
+        unit = scost[selected_path[0][1][0]][selected_path[0][1][1]]
+        for i in range(3, len(selected_path[0]), 2):
+            if scost[selected_path[0][i][0]][selected_path[0][i][1]] < unit:
+                unit = scost[selected_path[0][i][0]][selected_path[0][i][1]]
+        # update value
+        scost[selected_path[0][0][0]][selected_path[0][0][1]] = unit
+        position = -1
+        for i in range(1, len(selected_path[0])):
+            scost[selected_path[0][i][0]][selected_path[0][i][1]] += position * unit
+            if scost[selected_path[0][i][0]][selected_path[0][i][1]] == 0:
+                scost[selected_path[0][i][0]][selected_path[0][i][1]] = None
+            position *= -1
+        return scost
+
+    # calculate optimal matrix cost
+    while optimal is False:
+        difference = checkNonDegeneracy(scost, number_of_supply, number_of_demand)
+        if difference > 0:
+            scost = resolveDegeneracy(scost, cost, difference)
+        # redudancy is never arise with vogel method, so we cant just relax and not create a way to resolve the redudancy case
+
+        number_of_highest_negative_cost_change, selected_path = findHighestNegativeNetCostChange(scost, mcost, number_of_supply, number_of_demand)
+        if number_of_highest_negative_cost_change > 0:
+            scost = makeOptimal(selected_path, scost)
+        else:
+            optimal = True
+
+    # calculate transportation cost
+    for i in range(len(scost)):
+        for j in range(len(scost[0])):
+            if scost[i][j] is not None:
+                transportation_cost += mcost[i][j] * scost[i][j]
+
+    return [scost, transportation_cost]
+
+
+# function to find solution for minimum transportation from input matrix of supply, demand, and cost
+# returning allocated cost and transportation cost
+def findsolution(supply, demand, cost):
+    msupply, mdemand, mcost, balance = balancingCost(supply, demand, cost)
+    scost, transportation_cost = findInitialSolution(msupply, mdemand, mcost)
+    scost, transportation_cost = findOptimalSolution(msupply, mdemand, mcost, cost, scost)
+    return [scost, transportation_cost]
+
+
+# function to validate input
+# retruning true or false
+def validateInput(arr):
+    if type(arr) is list: 
+        k = len(arr)
+        if k > 0:
+            if type(arr[0]) is list:
+                n = len(arr[0])
+                if n > 0:
+                    for i in range(k):
+                        for j in range(n):
+                            if (type(arr[i]) is int or type(arr[i]) is float):
+                                if arr[i] < 0:
+                                    return False
+                            else:
+                                return False
+                else:
+                    return False
+            else:
+                for i in range(k):
+                    if type(arr[i]) is int or type(arr[i]) is float:
+                        if arr[i] < 0:
+                            return False
+                    else:
+                        return False
+        else:
+            return False
+    else:
+        return False
+####################
+
+#########################
+def findMin(x,y):
+  if x < y:
+    return x
+  else:
+    return y
+
+def findMax(x,y):
+  if x > y:
+    return x
+  else:
+    return y
+
+##kompleksiti n^2
+def degenerasi(temp_cost,rows,columns):
+  deg = 0
+  for i in range(len(temp_cost)):
+    for j in range(len(temp_cost[0])):
+      if(temp_cost[i][j] != 0 and temp_cost[i][j] != '-'):
+          deg = deg+1
+  min = rows+columns -1
+  if(deg < min):
+      return [False,deg,min]
+  else:
+      return [True,deg,min]
+
+##kompleksiti n
+def partition(array, low, high):
+
+  pivot = array[high]
+  i = low - 1
+  for j in range(low, high):
+    if array[j] <= pivot:
+      i = i + 1
+      (array[i], array[j]) = (array[j], array[i])
+  (array[i + 1], array[high]) = (array[high], array[i + 1])
+
+  return [i + 1,array]
+
+def runQuickSort(matriks):
+  low = 0
+  high = len(matriks) -1
+  return quickSort(matriks,low,high)
+
+#dari ref n log n
+def quickSort(array,low,high):
+  if low < high:
+    par = partition(array, low, high)
+    pi = par[0]
+    array = par[1]
+    quickSort(array, low, pi - 1)
+    quickSort(array, pi + 1, high)
+  return array
+
+##kompleksiti n^2
+def insertSmalest(m_cost,m_tcost,smalest,n):
+
+  count = 0;
+  temp_cost = m_tcost
+  for i in range(len(m_cost)):
+    for j in range(len(m_cost[0])):
+      if count == n:
+        break;
+      jalur = CariPola(m_tcost,i,j)
+      #print(jalur)
+      if m_cost[i][j] == smalest[count] and temp_cost[i][j] == 0 and jalur == False:
+        count = count+1
+        m_tcost[i][j] = 0.000000000000000001
+    if count == n:
+        break;
+  return m_tcost
+
+##kompleksiti n^2
+def printMatriks(m):
+  for i in range(len(m)):
+    for j in range(len(m[0])):
+      print(m[i][j],end=' ')
+    print('\n')
+
+def createArrayTemp(rows,columns):
+  arr=[]
+  for i in range(rows):
+      col = []
+      for j in range(columns):
+          col.append(0)
+      arr.append(col)
+  return arr
+
+##kompleksiti n^2
+def hitungCost(matriks_cost,temp_cost):
+  cost =0
+  for i in range(len(matriks_cost)):
+    for j in range(len(matriks_cost[0])):
+      if(temp_cost[i][j] != 0 and temp_cost[i][j] != '-'):
+        cost = cost+(temp_cost[i][j]*matriks_cost[i][j])
+  return cost
+
+##kompleksiti n^2
+def getSisaCost(matriks_cost,temp_cost):
+  arr=[]
+  for i in range(len(matriks_cost)):
+    for j in range(len(matriks_cost[0])):
+      if(temp_cost[i][j] == 0):
+        arr.append(matriks_cost[i][j])
+  return arr
+
+def CariPola( temp_cost,row, col):
+    jalur = [[ row, col]]
+    if not CariHorizonal( temp_cost,jalur, row, col, row, col):
+      return False
+    return jalur
+
+def CariHorizonal( temp_cost,jalur, row, col, row1, col1):
+    for i in range( 0, len(temp_cost[0])):
+        if i != col and temp_cost[ row][ i] != 0:
+            if i == col1:
+                jalur.append( [ row, i])
+                return True
+            if CariVertical( temp_cost,jalur, row, i, row1, col1):
+                jalur.append( [ row, i])
+                return True
+    return False
+
+def CariVertical(temp_cost, jalur, row, col, row1, col1):
+    for i in range( 0, len(temp_cost)):
+        if i != row and temp_cost[ i][ col] != 0:
+            if CariHorizonal( temp_cost,jalur, i, col, row1, col1):
+                jalur.append([ i, col])
+                return True
+    return False 
+
+
+def hitungSelisih(jalur,matriks_cost):
+  selisih = 0
+
+  for i in range(0,len(jalur)):
+    if i%2 == 1:
+      selisih = selisih + matriks_cost[jalur[i][0]][jalur[i][1]]*-1
+    else:
+      selisih = selisih + matriks_cost[jalur[i][0]][jalur[i][1]]
+  return selisih
+
+##kompleksiti 2*n
+def tukarPosisi(temp_cost,jalur):
+  min = 0
+  min_index =[]
+  for i in range(0,len(jalur)):
+    if i%2 == 1:
+      min_temp =  temp_cost[jalur[i][0]][jalur[i][1]]
+      if(min == 0):
+        min = min_temp
+      elif(min_temp < min):
+        min = min_temp
+        min_index = jalur[i]
+  
+  for i in range(0,len(jalur)):
+    if temp_cost[jalur[i][0]][jalur[i][1]] == 0:
+      temp_cost[jalur[i][0]][jalur[i][1]] = min
+    else:
+      if(i%2 == 1):
+        temp_cost[jalur[i][0]][jalur[i][1]] = temp_cost[jalur[i][0]][jalur[i][1]] - min
+      else:
+        temp_cost[jalur[i][0]][jalur[i][1]] = temp_cost[jalur[i][0]][jalur[i][1]] + min
+  return temp_cost
+
+def stepingStone(matriks_cost,temp_cost,rows,columns):
+  for i in range(0,rows):
+    for j in range(0,columns):
+      if(temp_cost[i][j] != 0):
+        #print(temp_cost[i][j])
+        continue
+      else:
+        jalur = CariPola(temp_cost,i,j)
+        if(jalur == False):
+          continue
+        selisih = hitungSelisih(jalur,matriks_cost)
+        if(selisih < 0):
+          temp_cost = tukarPosisi(temp_cost,jalur)
+  return temp_cost   
+
+def balancingCost(supply, demand, cost):
+    balance = total_supply = total_demand = 0
+    msupply = copy.deepcopy(supply)
+    mdemand = copy.deepcopy(demand)
+    mcost = copy.deepcopy(cost)
+
+    for x in supply:
+        total_supply += x
+
+    for x in demand:
+        total_demand += x
+
+    if total_supply > total_demand:
+        balance = 1
+        mdemand.append(total_supply - total_demand)
+        for i in range(len(supply)):
+            mcost[i].append(0)
+
+    if total_supply < total_demand:
+        balance = -1
+        msupply.append(total_demand - total_supply)
+        mcost.append([0] * len(demand))
+
+    return [msupply, mdemand, mcost, balance]
+
+##kompleksiti n
+def northwest(temp_cost,temp_supply,temp_demand):
+  i=0;
+  j=0;
+  while sum(temp_supply) !=0 and sum(temp_demand) != 0: 
+    min = findMin(temp_supply[i],temp_demand[j])
+    temp_cost[i][j] = min
+    temp_supply[i] = temp_supply[i]-min
+    temp_demand[j] = temp_demand[j]-min
+    if temp_supply[i] == 0:
+      i = i+1
+    if temp_demand[j] == 0:
+      j = j+1
+  return temp_cost
+
+def findsolution2(supply, demand, cost):
+    msupply, mdemand, mcost, balance = balancingCost(supply, demand, cost)
+    rows = len(msupply) # Height.
+    columns = len(mdemand) # Width.
+    temp_cost = createArrayTemp(rows,columns)
+    temp_cost = northwest(temp_cost,msupply, mdemand)
+
+    transportation_cost = hitungCost(mcost,temp_cost) 
+
+    rows = len(supply)
+    columns = len(demand)
+
+    dege = degenerasi(temp_cost,rows,columns)
+    if(dege[0]==False):
+        matriks_free = getSisaCost(mcost,temp_cost)
+        smalest = runQuickSort(matriks_free)
+        temp_cost = insertSmalest(mcost,temp_cost,smalest,dege[2]-dege[1])
+
+    cost_a = hitungCost(mcost,temp_cost)
+    cost_b = 0
+
+    while cost_a != cost_b:
+  	    cost_a = cost_b
+  	    temp_cost = stepingStone(mcost,temp_cost,rows,columns)
+  	    cost_b = hitungCost(mcost,temp_cost)
+
+    return [mcost, cost_a]
+##############################
+def on_add_input_click(event):
+    number_of_supply = document.querySelector("#number-of-supply")
+    number_of_demand = document.querySelector("#number-of-demand")
+    nsupply = int(number_of_supply.value)
+    ndemand = int(number_of_demand.value)
+    transportation_matrix = document.querySelector("#transportation-matrix")
+    transportation_matrix.innerHTML = ""
+    if nsupply > 0 and ndemand > 0:
+        max_i = nsupply + 1
+        row_i = document.createElement("tr")
+        cell_ij = document.createElement("td")
+        cell_ij.innerText = " "
+        row_i.appendChild(cell_ij)
+        for i in range(ndemand):
+            cell_ij = document.createElement("td")
+            cell_ij.innerText = "D{}".format(i+1)
+            row_i.appendChild(cell_ij)
+        cell_ij = document.createElement("td")
+        cell_ij.innerText = "Supply"
+        row_i.appendChild(cell_ij)
+        transportation_matrix.appendChild(row_i)
+        for i in range(max_i):
+            row_i = document.createElement("tr")
+            if i == max_i - 1:
+                cell_ij = document.createElement("td")
+                cell_ij.innerText = "Demand"
+                row_i.appendChild(cell_ij)
+                for j in range(ndemand):
+                    cell_ij = document.createElement("td")
+                    text_ij = document.createElement("input")
+                    text_ij.id = "demand_{}".format(j)
+                    text_ij.type = "number"
+                    text_ij.min = "0"
+                    text_ij.value = "0"
+                    cell_ij.appendChild(text_ij)
+                    row_i.appendChild(cell_ij)
+                cell_ij = document.createElement("td")
+                text_ij.innerText = " "
+                row_i.appendChild(cell_ij)
+            else:
+                cell_ij = document.createElement("td")
+                cell_ij.innerText = "S{}".format(i+1)
+                row_i.appendChild(cell_ij)
+                for j in range(ndemand):
+                    cell_ij = document.createElement("td")
+                    text_ij = document.createElement("input")
+                    text_ij.id = "cost_{}_{}".format(i,j)
+                    text_ij.type = "number"
+                    text_ij.min = "0"
+                    text_ij.value = "0"
+                    cell_ij.appendChild(text_ij)
+                    row_i.appendChild(cell_ij)
+                cell_ij = document.createElement("td")
+                text_ij = document.createElement("input")
+                text_ij.id = "supply_{}".format(i)
+                text_ij.type = "number"
+                text_ij.min = "0"
+                text_ij.value = "0"
+                cell_ij.appendChild(text_ij)
+                row_i.appendChild(cell_ij)
+            transportation_matrix.appendChild(row_i)
+
+def on_calc_click(event):
+    number_of_supply = document.querySelector("#number-of-supply")
+    number_of_demand = document.querySelector("#number-of-demand")
+    select = document.querySelector("#initial")
+    initial = int(select.value)
+    nsupply = int(number_of_supply.value)
+    ndemand = int(number_of_demand.value)
+    supply = []
+    demand = []
+    cost = []
+    info = document.querySelector("#result-info")
+    info.innerText = ''
+    info.innerText = supply
+    if nsupply > 0 and ndemand > 0:
+        for i in range(nsupply):
+            supply_i = document.querySelector("#supply_{}".format(i))
+            supply.append(int(supply_i.value))
+        for i in range(ndemand):
+            demand_i = document.querySelector("#demand_{}".format(i))
+            demand.append(int(demand_i.value))
+        for i in range(nsupply):
+            cost_i = []
+            for j in range(ndemand):
+                cost_ij = document.querySelector("#cost_{}_{}".format(i,j))
+                cost_i.append(int(cost_ij.value))
+            cost.append(cost_i)
+        if(initial == 1):
+        	scost, transportation_cost = findsolution2(supply, demand, cost)
+        elif(initial == 2):
+        	scost, transportation_cost = findsolution(supply, demand, cost)
+        console.log(transportation_cost)
+        info = document.querySelector("#result-info")
+        info.innerText = "solusi optimum untuk matriks alokasi adalah sebagai berikut:"
+        table_cost_matrix = document.querySelector("#cost-matrix")
+        table_cost_matrix.innerHTML = "";
+        for i in range(nsupply):
+            row_i = document.createElement("tr")
+            for j in range(ndemand):
+                cell_ij = document.createElement("td")
+                if scost[i][j] is None:
+                    scost[i][j] = 0
+                cell_ij.innerText = "cost={}, alokasi={}".format(cost[i][j], scost[i][j])
+                row_i.appendChild(cell_ij)
+            table_cost_matrix.appendChild(row_i)
+        result_cost = document.querySelector("#transportation-cost")
+        result_cost.innerText = "Total biaya transportasi adalah {}".format(transportation_cost)
+
+
+button1 = document.querySelector("#input-cost")
+button1.addEventListener("click", create_proxy(on_add_input_click))
+button2 = document.querySelector("#calculate-cost")
+button2.addEventListener("click", create_proxy(on_calc_click))
+    </py-script>
+  </body>
+</html>
