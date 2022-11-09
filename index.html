@@ -86,10 +86,11 @@ import asyncio
 import re
 
 ####################
+import copy
+
 # function to balance the matrix cost if total supply is not equal with total demand
 # by adding zero dummy column if demand is lower or zero dummy row if demand is higher
 # returning new matrix of supply, demand, cost, and information about the balance
-# complexity: m+n = O(2n) if supply and demand is equal, 2m+n or m+2n = O(3n) if supply and demand is not equal
 def balancingCost(supply, demand, cost):
     balance = total_supply = total_demand = 0
     msupply = copy.deepcopy(supply)
@@ -118,7 +119,6 @@ def balancingCost(supply, demand, cost):
 
 # function to find initial solution with heuristic vogel -- minimum maximum cost difference for penalty
 # returning allocated cost and its transportation cost
-# complexity ((m+n-1)((2mn) + (i(m atau n)) + (m atau m+n atau n))) = O(4n3 + 2n) atau O(4n3 + 3n) atau O(4n3 + 2n2 + n) atau O(4n3 + 2n2 + 2n)
 def findInitialSolution(msupply, mdemand, mcost):
     allocated_cells = []
     transportation_cost = 0
@@ -319,13 +319,13 @@ def findOptimalSolution(msupply, mdemand, mcost, cost, scost):
     # function to convert solution to be non-degenerate
     # retruning new initial solution of matrix cost
     def resolveDegeneracy(scost, cost, number_of_missing_cell):
+        dummy_cell = []
         # find non allocated least cost
         arr_cost = []
         for i in range(len(cost)):
             for j in range(len(cost[0])):
                 if scost[i][j] is None:
                     arr_cost.append([cost[i][j], i, j])
-        number_of_non_allocated_cost = len(arr_cost)
         # heap sort algorithm for the array
         def sortfy_arr(arr, n, i):
             larger_element = i
@@ -369,13 +369,14 @@ def findOptimalSolution(msupply, mdemand, mcost, cost, scost):
         while n < number_of_missing_cell:
             if findClosepath(scost, number_of_supply, number_of_demand, arr_cost[i][1], arr_cost[i][2], arr_cost[i][1], arr_cost[i][2]) == False:
                 scost[arr_cost[i][1]][arr_cost[i][2]] = 0
+                dummy_cell.append([ arr_cost[i][1], arr_cost[i][2] ])
                 n += 1
             i += 1
-        return scost
+        return [scost, dummy_cell]
 
     # function to find closepath with highest negative cost change
     # returning the closepath with highest negative cost change
-    def findHighestNegativeNetCostChange(scost, mcost, number_of_supply, number_of_demand):
+    def findHighestNegativeNetCostChange(scost, mcost, number_of_supply, number_of_demand, dummy_cell):
         highest_negative_cost_change = [0]
         selected_path = [None]
 
@@ -432,7 +433,12 @@ def findOptimalSolution(msupply, mdemand, mcost, cost, scost):
 
         # calculate number of found closepath with highest negative cost change
         if selected_path[0] is not None:
-            number_of_highest_negative_cost_change = len(selected_path[0])
+            number_of_highest_negative_cost_change = len(selected_path)
+            for i in range(len(selected_path[0])):
+                for j in range(len(dummy_cell)):
+                    if (selected_path[0][i][0] == dummy_cell[j][0]) and (selected_path[0][i][1] == dummy_cell[j][1]):
+                        number_of_highest_negative_cost_change = 0
+                
         else:
             number_of_highest_negative_cost_change =0
 
@@ -460,10 +466,9 @@ def findOptimalSolution(msupply, mdemand, mcost, cost, scost):
     while optimal is False:
         difference = checkNonDegeneracy(scost, number_of_supply, number_of_demand)
         if difference > 0:
-            scost = resolveDegeneracy(scost, cost, difference)
-        # redudancy is never arise with vogel method, so we cant just relax and not create a way to resolve the redudancy case
+            scost, dummy_cell = resolveDegeneracy(scost, cost, difference)
 
-        number_of_highest_negative_cost_change, selected_path = findHighestNegativeNetCostChange(scost, mcost, number_of_supply, number_of_demand)
+        number_of_highest_negative_cost_change, selected_path = findHighestNegativeNetCostChange(scost, mcost, number_of_supply, number_of_demand, dummy_cell)
         if number_of_highest_negative_cost_change > 0:
             scost = makeOptimal(selected_path, scost)
         else:
