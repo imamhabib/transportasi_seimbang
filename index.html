@@ -44,9 +44,22 @@
               <input class="form-control" id="number-of-demand" type="number" name="number_of_demand" min="1" value="1"><br>
               <button class="form-control" id="input-cost">Input Matriks Supply Demand Cost</button>
             </fieldset>
+            <br><br>
+            <p>Atau menggunakan file template <a href="https://github.com/imamhabib/transportasi_seimbang/blob/main/input.txt" target="_blank">Download file template</a></p>
+            <form id='importPfForm' class="form-group">
+                <input class="form-control" type='file' name='datafile' size='20' id="file-input">
+                <textarea class="form-control" name="file-input-data" id="content" >
+                </textarea>
+            </form>
             <fieldset>
-              <br><br>
+                <br><br><br>
               <table id="transportation-matrix"></table><br>
+              <br>
+              Pilih metode input yang akan dipakai
+              <select class="form-control"  id="input_type">
+                <option value="1">1. Input interface</option>
+                <option value="2">2. File Input</option>
+              </select>
               <br>
               Pilih metode awal inisialisasi
               <select class="form-control"  id="initial">
@@ -57,7 +70,7 @@
               <button class="form-control"  id="calculate-cost">Hitung minimum cost</button>
             </fieldset>
             
-        </div>
+        
         <br><br><br>
         <div class="row">
             <p id="result-info"></p>
@@ -67,7 +80,10 @@
     </div>
     <py-script>
 from pyodide.ffi import create_proxy, to_js
+from js import document, FileReader
 import copy
+import asyncio
+import re
 
 ####################
 # function to balance the matrix cost if total supply is not equal with total demand
@@ -416,7 +432,7 @@ def findOptimalSolution(msupply, mdemand, mcost, cost, scost):
 
         # calculate number of found closepath with highest negative cost change
         if selected_path[0] is not None:
-            number_of_highest_negative_cost_change = len(selected_path)
+            number_of_highest_negative_cost_change = len(selected_path[0])
         else:
             number_of_highest_negative_cost_change =0
 
@@ -815,6 +831,16 @@ def on_add_input_click(event):
                 row_i.appendChild(cell_ij)
             transportation_matrix.appendChild(row_i)
 
+async def process_file(event):
+    fileList = event.target.files.to_py()
+    i=0
+
+    for f in fileList:
+        data = await f.text()
+
+    document.getElementById("content").value = data
+
+
 def on_calc_click(event):
     number_of_supply = document.querySelector("#number-of-supply")
     number_of_demand = document.querySelector("#number-of-demand")
@@ -828,45 +854,92 @@ def on_calc_click(event):
     info = document.querySelector("#result-info")
     info.innerText = ''
     info.innerText = supply
-    if nsupply > 0 and ndemand > 0:
-        for i in range(nsupply):
-            supply_i = document.querySelector("#supply_{}".format(i))
-            supply.append(int(supply_i.value))
-        for i in range(ndemand):
-            demand_i = document.querySelector("#demand_{}".format(i))
-            demand.append(int(demand_i.value))
-        for i in range(nsupply):
-            cost_i = []
-            for j in range(ndemand):
-                cost_ij = document.querySelector("#cost_{}_{}".format(i,j))
-                cost_i.append(int(cost_ij.value))
-            cost.append(cost_i)
-        if(initial == 1):
-        	scost, transportation_cost = findsolution2(supply, demand, cost)
-        elif(initial == 2):
-        	scost, transportation_cost = findsolution(supply, demand, cost)
-        console.log(transportation_cost)
-        info = document.querySelector("#result-info")
-        info.innerText = "solusi optimum untuk matriks alokasi adalah sebagai berikut:"
-        table_cost_matrix = document.querySelector("#cost-matrix")
-        table_cost_matrix.innerHTML = "";
-        for i in range(nsupply):
-            row_i = document.createElement("tr")
-            for j in range(ndemand):
-                cell_ij = document.createElement("td")
-                if scost[i][j] is None:
-                    scost[i][j] = 0
-                cell_ij.innerText = "cost={}, alokasi={}".format(cost[i][j], scost[i][j])
-                row_i.appendChild(cell_ij)
-            table_cost_matrix.appendChild(row_i)
-        result_cost = document.querySelector("#transportation-cost")
-        result_cost.innerText = "Total biaya transportasi adalah {}".format(transportation_cost)
+
+    input_type_select = document.querySelector("#input_type")
+    input_type = int(input_type_select.value)
+
+    if(input_type == 1):
+        if nsupply > 0 and ndemand > 0:
+            for i in range(nsupply):
+                supply_i = document.querySelector("#supply_{}".format(i))
+                supply.append(int(supply_i.value))
+            for i in range(ndemand):
+                demand_i = document.querySelector("#demand_{}".format(i))
+                demand.append(int(demand_i.value))
+            for i in range(nsupply):
+                cost_i = []
+                for j in range(ndemand):
+                    cost_ij = document.querySelector("#cost_{}_{}".format(i,j))
+                    cost_i.append(int(cost_ij.value))
+                cost.append(cost_i)
+            if(initial == 1):
+                console.log(len(supply))
+                scost, transportation_cost = findsolution2(supply, demand, cost)
+            elif(initial == 2):
+            	scost, transportation_cost = findsolution(supply, demand, cost)
+    elif(input_type ==2):
+        input_file = document.querySelector("#content")
+        data = str(input_file.value)
+
+        data = data.split('#')
+         
+
+        cost = str(data[0])
+        supply = str(data[1])
+        demand = str(data[2])
+
+
+        flat_1 = re.findall(r"\[(.+?)\]", cost)
+        cost = [sub.split(",") for sub in flat_1]
+        for i in range(len(cost)):
+            for j in range(len(cost[0])):
+                cost[i][j] = int(cost[i][j])
+
+
+        flat_2 = re.findall(r"\[(.+?)\]", supply)
+        supply = [sub.split(",") for sub in flat_2]
+        supply = supply[0]
+        supply = [eval(i) for i in supply]
+
+        flat_3 = re.findall(r"\[(.+?)\]", demand)
+        demand = [sub.split(",") for sub in flat_3]
+        demand = demand[0]
+        demand = [eval(i) for i in demand]
+
+        nsupply = len(supply)
+        ndemand = len(demand)
+
+        scost, transportation_cost = findsolution2(supply, demand, cost)
+
+    console.log(transportation_cost)
+    info = document.querySelector("#result-info")
+    info.innerText = "solusi optimum untuk matriks alokasi adalah sebagai berikut:"
+    table_cost_matrix = document.querySelector("#cost-matrix")
+    table_cost_matrix.innerHTML = "";
+    for i in range(nsupply):
+        row_i = document.createElement("tr")
+        for j in range(ndemand):
+            cell_ij = document.createElement("td")
+            if scost[i][j] is None:
+                scost[i][j] = 0
+            cell_ij.innerText = "cost={}, alokasi={}".format(cost[i][j], scost[i][j])
+            row_i.appendChild(cell_ij)
+        table_cost_matrix.appendChild(row_i)
+    result_cost = document.querySelector("#transportation-cost")
+    result_cost.innerText = "Total biaya transportasi adalah {}".format(transportation_cost)
+      
 
 
 button1 = document.querySelector("#input-cost")
 button1.addEventListener("click", create_proxy(on_add_input_click))
 button2 = document.querySelector("#calculate-cost")
 button2.addEventListener("click", create_proxy(on_calc_click))
+
+file_event = create_proxy(process_file)
+    # Set the listener to the callback
+e = document.querySelector("#file-input")
+e.addEventListener("change", file_event, False)
+
     </py-script>
   </body>
 </html>
