@@ -1,6 +1,7 @@
 Transportation Problem
 
 This code using python and run using pyscript
+Try demo https://transportasi-seimbang.herokuapp.com/index.html
 
 Created by Sven Group:
 
